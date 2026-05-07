@@ -4,43 +4,43 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const MAIN_JS = path.join(__dirname, "..", "src", "main.js");
+const THEME_RUNTIME_JS = path.join(__dirname, "..", "src", "theme-runtime.js");
 
 describe("main theme transition wiring", () => {
   it("fades the render window out before theme reload and back in after load", () => {
-    const source = fs.readFileSync(MAIN_JS, "utf8");
+    const mainSource = fs.readFileSync(MAIN_JS, "utf8");
+    const runtimeSource = fs.readFileSync(THEME_RUNTIME_JS, "utf8");
 
     assert.ok(
-      source.includes('require("./window-opacity-transition")'),
-      "main should use the shared BrowserWindow opacity transition helper"
+      mainSource.includes('require("./theme-fade-sequencer")'),
+      "main should construct the raw theme fade/reload sequencer"
     );
-    assert.match(source, /THEME_SWITCH_FADE_OUT_MS\s*=\s*140/);
-    assert.match(source, /THEME_SWITCH_FADE_IN_MS\s*=\s*180/);
+    assert.ok(
+      mainSource.includes('require("./theme-runtime")'),
+      "main should delegate theme switching to theme-runtime"
+    );
+    assert.match(mainSource, /THEME_SWITCH_FADE_OUT_MS\s*=\s*140/);
+    assert.match(mainSource, /THEME_SWITCH_FADE_IN_MS\s*=\s*180/);
 
-    const activateIndex = source.indexOf("function activateTheme(");
-    const fadeOutIndex = source.indexOf("animateThemeWindowOpacity(transitionSeq, 0", activateIndex);
-    const reloadHelperIndex = source.indexOf("function reloadThemeWindowsAfterFade(");
-    const reloadCallIndex = source.indexOf("reloadThemeWindowsAfterFade(", fadeOutIndex);
-    const syncIndex = source.indexOf("syncRendererStateAfterLoad({ includeStartupRecovery: false })", activateIndex);
-    const fadeInHelperIndex = source.indexOf("function fadeInThemeWindow(");
-    const fadeInCallIndex = source.indexOf("fadeInThemeWindow(transitionSeq)", syncIndex);
-    const finishIndex = source.indexOf("const finishThemeReload = ", activateIndex);
+    const activateIndex = runtimeSource.indexOf("function activateTheme(");
+    const runIndex = runtimeSource.indexOf("callMethod(sequencer, \"run\", {", activateIndex);
+    const syncIndex = runtimeSource.indexOf("syncRendererStateAfterLoad({ includeStartupRecovery: false })", activateIndex);
+    const finishIndex = runtimeSource.indexOf("const finishThemeReload = ", activateIndex);
 
-    assert.ok(fadeOutIndex > activateIndex, "activateTheme should start by fading out the current render window");
-    assert.ok(reloadHelperIndex > 0, "theme reload should be wrapped so it can run after fade-out");
-    assert.ok(source.indexOf("renderContents.reload()", reloadHelperIndex) > reloadHelperIndex);
-    assert.ok(reloadCallIndex > fadeOutIndex, "theme reload should happen after the fade-out path");
-    assert.ok(source.indexOf("animateThemeWindowOpacity(seq, 1", fadeInHelperIndex) > fadeInHelperIndex);
-    assert.ok(fadeInCallIndex > syncIndex, "new theme should fade in only after renderer state has been synced");
+    assert.ok(runIndex > activateIndex, "activateTheme should run the theme fade sequencer");
+    assert.ok(runIndex > finishIndex, "sequencer should run after the finish callback is defined");
+    assert.ok(syncIndex > finishIndex, "renderer sync should stay inside the guarded finish path");
     assert.ok(finishIndex > activateIndex, "theme reload should have one guarded finish path");
     assert.ok(
-      source.includes("THEME_SWITCH_FADE_FALLBACK_MS"),
+      mainSource.includes("THEME_SWITCH_FADE_FALLBACK_MS"),
       "theme transition should have an opacity fallback so the window cannot stay transparent"
     );
-    assert.match(source, /scheduleThemeSwitchFadeFallback\(seq,\s*onFallback\)/);
-    assert.match(source, /const finishThemeReload = \(\) =>/);
+    assert.ok(runtimeSource.includes("onFallback: () => finishThemeReload()"));
+    assert.ok(runtimeSource.includes("onReloadFinished: () => finishThemeReload()"));
+    assert.match(runtimeSource, /const finishThemeReload = \(\) =>/);
     assert.ok(
-      source.includes("cancelThemeSwitchOpacityAnimation()"),
-      "starting a newer theme switch should cancel stale opacity timers"
+      !mainSource.includes("_buildAnimationAssetProbe"),
+      "main should not retain stale private helper references"
     );
   });
 });
